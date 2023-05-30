@@ -81,6 +81,16 @@ type CassandraUser struct {
 	Superuser  bool   `json:"superuser"`
 }
 
+type UserInfo struct {
+	Annotations map[string]string `json:"annotations,omitempty"`
+	// MountPath tells the script where to read the user information. Required if annotation injection is used, otherwise optional
+	MountPath  string `json:"mountPath,omitempty"`
+	SecretName string `json:"secretName,omitempty"`
+
+	// ServiceAccountName override job ServiceAccount, otherwise Spec.ServiceAccount (the one used to create the server pods) is used
+	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+}
+
 // CassandraDatacenterSpec defines the desired state of a CassandraDatacenter
 // +k8s:openapi-gen=true
 // +kubebuilder:pruning:PreserveUnknownFields
@@ -186,9 +196,13 @@ type CassandraDatacenterSpec struct {
 
 	// This secret defines the username and password for the Cassandra server superuser.
 	// If it is omitted, we will generate a secret instead.
+	// TODO: deprecate
 	SuperuserSecretName string `json:"superuserSecretName,omitempty"`
 
-	// The k8s service account to use for the server pods
+	// stores CQL user info and storage location
+	UserInfo []UserInfo `json:"userInfo,omitempty"`
+
+	// ServiceAccount is the k8s service account to use for the server pods
 	ServiceAccount string `json:"serviceAccount,omitempty"`
 
 	// DEPRECATED. Use CassandraTask for rolling restarts. Whether to do a rolling restart at the next opportunity. The operator will set this back

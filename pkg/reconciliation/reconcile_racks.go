@@ -12,6 +12,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -104,6 +105,14 @@ func (rc *ReconciliationContext) CalculateRackInformation() error {
 
 func (rc *ReconciliationContext) CheckSuperuserSecretCreation() result.ReconcileResult {
 	rc.ReqLogger.Info("reconcile_racks::CheckSuperuserSecretCreation")
+
+	if rc.Datacenter.Spec.UserInfo != nil {
+		return result.Continue()
+	}
+
+	if rc.IsInitialized() {
+		return result.Continue()
+	}
 
 	_, err := rc.retrieveSuperuserSecretOrCreateDefault()
 	if err != nil {
@@ -876,6 +885,10 @@ func (rc *ReconciliationContext) UpdateSecretWatches() error {
 func (rc *ReconciliationContext) CreateUsers() result.ReconcileResult {
 	dc := rc.Datacenter
 
+	if rc.IsInitialized() {
+		return result.Continue()
+	}
+
 	if val, found := dc.Annotations[api.SkipUserCreationAnnotation]; found && val == "true" {
 		rc.ReqLogger.Info(api.SkipUserCreationAnnotation + " is set, skipping CreateUser")
 		return result.Continue()
@@ -888,19 +901,113 @@ func (rc *ReconciliationContext) CreateUsers() result.ReconcileResult {
 
 	rc.ReqLogger.Info("reconcile_racks::CreateUsers")
 
+	if dc.Spec.UserInfo != nil {
+		for i, userInfo := range dc.Spec.UserInfo {
+			ttl := int32(86400)
+
+			filePath := userInfo.MountPath
+
+			// We want to mount it as a directory and read the files as usernames
+			if userInfo.SecretName != "" {
+				filePath = "/mnt/secrets/users"
+			}
+
+			jobName := fmt.Sprintf("usercreate-%s-%d", dc.Name, i)
+			nsName := types.NamespacedName{Name: jobName, Namespace: dc.Namespace}
+			job := &batchv1.Job{}
+			err := rc.Client.Get(rc.Ctx, nsName, job)
+			if err != nil && errors.IsNotFound(err) {
+
+				job = &batchv1.Job{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: dc.Namespace,
+						Name:      jobName,
+					},
+					Spec: batchv1.JobSpec{
+						Template: corev1.PodTemplateSpec{
+							Spec: corev1.PodSpec{
+								Containers: []corev1.Container{
+									{
+										Name:            "client",
+										Image:           "k8ssandra/k8ssandra-client:latest",
+										ImagePullPolicy: corev1.PullIfNotPresent,
+										Args:            []string{"users", "add", "--path", filePath, "--dc", dc.Name},
+									},
+								},
+								RestartPolicy: corev1.RestartPolicyNever,
+							},
+						},
+						TTLSecondsAfterFinished: &ttl,
+					},
+				}
+
+				if len(userInfo.Annotations) > 0 {
+					job.Spec.Template.ObjectMeta.Annotations = userInfo.Annotations
+				}
+
+				if userInfo.SecretName != "" {
+					vol := corev1.Volume{
+						Name: "user-source",
+					}
+
+					vol.VolumeSource = corev1.VolumeSource{
+						Secret: &corev1.SecretVolumeSource{
+							SecretName: userInfo.SecretName,
+						},
+					}
+
+					job.Spec.Template.Spec.Volumes = []corev1.Volume{vol}
+					job.Spec.Template.Spec.Containers[0].VolumeMounts = []corev1.VolumeMount{
+						{
+							Name:      "user-source",
+							ReadOnly:  true,
+							MountPath: filePath,
+						},
+					}
+				}
+
+				// Set CassandraDatacenter dc as the owner and controller
+				err := setControllerReference(dc, job, rc.Scheme)
+				if err != nil {
+					return result.Error(err)
+				}
+
+				if userInfo.ServiceAccountName != "" {
+					job.Spec.Template.Spec.ServiceAccountName = userInfo.ServiceAccountName
+				} else {
+					job.Spec.Template.Spec.ServiceAccountName = dc.Spec.ServiceAccount
+				}
+
+				if err := rc.Client.Create(rc.Ctx, job); err != nil {
+					return result.Error(err)
+				}
+			} else if err != nil {
+				return result.Error(err)
+			} else {
+				// check if job status complete
+				if job.Status.CompletionTime != nil {
+					return result.Continue()
+				}
+
+				return result.RequeueSoon(5)
+			}
+		}
+	}
+
 	err := rc.UpdateSecretWatches()
 	if err != nil {
 		rc.ReqLogger.Error(err, "Failed to update dynamic watches on secrets")
 	}
 
-	// make sure the default superuser secret exists
-	_, err = rc.retrieveSuperuserSecretOrCreateDefault()
-	if err != nil {
-		rc.ReqLogger.Error(err, "Failed to verify superuser secret status")
+	// TODO Nope..
+	if dc.Spec.UserInfo == nil {
+		_, err = rc.retrieveSuperuserSecretOrCreateDefault()
+		if err != nil {
+			rc.ReqLogger.Error(err, "Failed to verify superuser secret status")
+		}
 	}
 
 	users := rc.GetUsers()
-
 	for _, user := range users {
 		err := rc.upsertUser(user)
 		if err != nil {

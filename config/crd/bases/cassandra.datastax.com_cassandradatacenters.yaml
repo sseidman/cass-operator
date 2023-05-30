@@ -8511,7 +8511,8 @@ spec:
                 pattern: (6\.8\.\d+)|(3\.11\.\d+)|(4\.\d+\.\d+)
                 type: string
               serviceAccount:
-                description: The k8s service account to use for the server pods
+                description: ServiceAccount is the k8s service account to use for
+                  the server pods
                 type: string
               size:
                 description: Desired number of Cassandra server nodes
@@ -10548,9 +10549,9 @@ spec:
                     type: object
                 type: object
               superuserSecretName:
-                description: This secret defines the username and password for the
+                description: 'This secret defines the username and password for the
                   Cassandra server superuser. If it is omitted, we will generate a
-                  secret instead.
+                  secret instead. TODO: deprecate'
                 type: string
               systemLoggerImage:
                 description: Container image for the log tailing sidecar container.
@@ -10621,6 +10622,28 @@ spec:
                       description: Value is the taint value the toleration matches
                         to. If the operator is Exists, the value should be empty,
                         otherwise just a regular string.
+                      type: string
+                  type: object
+                type: array
+              userInfo:
+                description: stores CQL user info and storage location
+                items:
+                  properties:
+                    annotations:
+                      additionalProperties:
+                        type: string
+                      type: object
+                    mountPath:
+                      description: MountPath tells the script where to read the user
+                        information. Required if annotation injection is used, otherwise
+                        optional
+                      type: string
+                    secretName:
+                      type: string
+                    serviceAccountName:
+                      description: ServiceAccountName override job ServiceAccount,
+                        otherwise Spec.ServiceAccount (the one used to create the
+                        server pods) is used
                       type: string
                   type: object
                 type: array
