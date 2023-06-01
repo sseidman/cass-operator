@@ -196,7 +196,6 @@ type CassandraDatacenterSpec struct {
 
 	// This secret defines the username and password for the Cassandra server superuser.
 	// If it is omitted, we will generate a secret instead.
-	// TODO: deprecate
 	SuperuserSecretName string `json:"superuserSecretName,omitempty"`
 
 	// stores CQL user info and storage location

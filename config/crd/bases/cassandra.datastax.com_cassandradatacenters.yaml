@@ -10549,9 +10549,9 @@ spec:
                     type: object
                 type: object
               superuserSecretName:
-                description: 'This secret defines the username and password for the
+                description: This secret defines the username and password for the
                   Cassandra server superuser. If it is omitted, we will generate a
-                  secret instead. TODO: deprecate'
+                  secret instead.
                 type: string
               systemLoggerImage:
                 description: Container image for the log tailing sidecar container.

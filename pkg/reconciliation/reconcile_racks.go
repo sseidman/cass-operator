@@ -876,8 +876,12 @@ func (rc *ReconciliationContext) UpdateSecretWatches() error {
 		name := types.NamespacedName{Name: user.SecretName, Namespace: dc.Namespace}
 		names = append(names, name)
 	}
-	dcNamespacedName := types.NamespacedName{Name: dc.Name, Namespace: dc.Namespace}
-	err := rc.SecretWatches.UpdateWatch(dcNamespacedName, names)
+
+	var err error
+	if len(names) > 0 {
+		dcNamespacedName := types.NamespacedName{Name: dc.Name, Namespace: dc.Namespace}
+		err = rc.SecretWatches.UpdateWatch(dcNamespacedName, names)
+	}
 
 	return err
 }
@@ -981,6 +985,7 @@ func (rc *ReconciliationContext) CreateUsers() result.ReconcileResult {
 				if err := rc.Client.Create(rc.Ctx, job); err != nil {
 					return result.Error(err)
 				}
+				continue
 			} else if err != nil {
 				return result.Error(err)
 			} else {
@@ -992,27 +997,29 @@ func (rc *ReconciliationContext) CreateUsers() result.ReconcileResult {
 				return result.RequeueSoon(5)
 			}
 		}
-	}
+		return result.Continue()
+	} else {
 
-	err := rc.UpdateSecretWatches()
-	if err != nil {
-		rc.ReqLogger.Error(err, "Failed to update dynamic watches on secrets")
-	}
-
-	// TODO Nope..
-	if dc.Spec.UserInfo == nil {
-		_, err = rc.retrieveSuperuserSecretOrCreateDefault()
+		err := rc.UpdateSecretWatches()
 		if err != nil {
-			rc.ReqLogger.Error(err, "Failed to verify superuser secret status")
+			rc.ReqLogger.Error(err, "Failed to update dynamic watches on secrets")
 		}
-	}
 
-	users := rc.GetUsers()
-	for _, user := range users {
-		err := rc.upsertUser(user)
-		if err != nil {
-			rc.ReqLogger.Error(err, "error updating user", "secretName", user.SecretName)
-			return result.Error(err)
+		// if UserInfo is specified, don't create superuser
+		if dc.Spec.UserInfo == nil {
+			_, err = rc.retrieveSuperuserSecretOrCreateDefault()
+			if err != nil {
+				rc.ReqLogger.Error(err, "Failed to verify superuser secret status")
+			}
+		}
+
+		users := rc.GetUsers()
+		for _, user := range users {
+			err := rc.upsertUser(user)
+			if err != nil {
+				rc.ReqLogger.Error(err, "error updating user", "secretName", user.SecretName)
+				return result.Error(err)
+			}
 		}
 	}
 
@@ -1029,7 +1036,7 @@ func (rc *ReconciliationContext) CreateUsers() result.ReconcileResult {
 	// For backwards compatibility
 	rc.Datacenter.Status.SuperUserUpserted = metav1.Now()
 
-	if err = rc.Client.Status().Patch(rc.Ctx, rc.Datacenter, patch); err != nil {
+	if err := rc.Client.Status().Patch(rc.Ctx, rc.Datacenter, patch); err != nil {
 		rc.ReqLogger.Error(err, "error updating the users upsert timestamp")
 		return result.Error(err)
 	}
